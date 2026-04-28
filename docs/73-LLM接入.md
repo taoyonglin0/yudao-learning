@@ -1,6 +1,8 @@
-# 73-LLM接入 - 大模型接入之多供应商接入
+# 73-LLM接入 - 多供应商接入
 
-> 本文档按照八步法（Why-What-How-Hard-Metric-Select-Impl-SKILL）分析 LLM 多供应商接入技术
+> 学习时间：2026-04-28
+> 任务编号：73
+> 所属模块：大模型接入
 
 ---
 
@@ -8,25 +10,25 @@
 
 ### 背景与痛点
 
-在大模型应用场景中，企业面临以下挑战：
+在企业级 AI 应用开发中，单一 AI 供应商存在以下问题：
 
-1. **单一供应商风险**：依赖单一 API 可能导致服务中断、成本波动或政策变更
-2. **成本优化需求**：不同供应商定价差异大，需要灵活切换以降低成本
-3. **模型多样性**：不同模型擅长不同场景（如代码生成、创意写作、多语言处理）
-4. **合规要求**：某些场景需要使用国产大模型（如通义千问、文心一言）
+1. **供应商锁定风险**：依赖单一厂商，议价能力弱，服务稳定性无保障
+2. **成本不可控**：不同厂商定价差异大，无法灵活切换到性价比更高的方案
+3. **功能局限性**：各厂商模型能力不同，某些场景需要特定模型（如代码生成、创意写作）
+4. **地域合规**：部分企业需要选择特定地区或合规的 AI 服务商
 
-### 带来的价值
+### 收益
 
-- ✅ **供应商隔离**：某供应商出问题可快速切换
-- ✅ **成本控制**：根据需求选择性价比最高的模型
-- ✅ **灵活扩展**：新增供应商只需实现接口，无需改动业务代码
-- ✅ **国产化支持**：全面支持国产大模型，满足合规需求
+- **成本优化**：可选择最具性价比的模型，按需切换
+- **稳定性保障**：主供应商故障时快速切换备份，保证业务连续性
+- **灵活性增强**：不同业务场景使用最适合的模型
+- **自主可控**：不依赖单一供应商，降低供应链风险
 
 ### 使用者
 
 - 后端开发工程师
 - AI 应用开发者
-- 需要构建智能客服、内容生成等业务的企业
+- 系统架构师
 
 ---
 
@@ -34,32 +36,133 @@
 
 ### 一句话定义
 
-**LLM 多供应商接入**是指通过统一的抽象层，封装不同大模型供应商的 API 调用，实现模型灵活切换和统一管理。
+**LLM 多供应商接入**是指在系统中统一封装多个 AI 大模型供应商的接入能力，提供统一的接口抽象，使业务层可以无感切换和调用不同厂商的 AI 能力。
 
 ### 核心组成部分
 
-| 组件 | 说明 |
-|------|------|
-| **平台枚举 (AiPlatformEnum)** | 定义支持的 AI 平台（OpenAI、百度、阿里、讯飞等） |
-| **模型工厂 (AiModelFactory)** | 统一创建和管理不同平台的 ChatModel |
-| **配置属性 (YudaoAiProperties)** | 统一配置管理，支持多平台 API Key |
-| **具体实现类** | 各平台特定的模型实现（Baichuan、DouBao、DeepSeek 等） |
+```
+┌─────────────────────────────────────────────────────────┐
+│                    业务层 (Service)                      │
+├─────────────────────────────────────────────────────────┤
+│              AI 模型工厂 (AiModelFactory)                │
+│                    统一入口                              │
+├──────────┬──────────┬──────────┬──────────┬────────────┤
+│ 通义千问  │ 文心一言  │ DeepSeek │ 智谱AI   │  ...更多   │
+│ (阿里)    │ (百度)    │ (DeepSeek)│ (智谱)   │            │
+├──────────┴──────────┴──────────┴──────────┴────────────┤
+│           Spring AI 抽象层                               │
+│     (ChatModel / ImageModel / EmbeddingModel)           │
+└─────────────────────────────────────────────────────────┘
+```
 
 ### 关键术语
 
-- **ChatModel**：Spring AI 定义的聊天模型接口
-- **EmbeddingModel**：向量化模型接口
-- **VectorStore**：向量数据库，用于 RAG 场景
-- **Tool Calling**：函数调用，让 LLM 能调用外部工具
+| 术语 | 说明 |
+|------|------|
+| ChatModel | 对话模型，用于文本生成 |
+| ImageModel | 图像生成模型 |
+| EmbeddingModel | 向量 embedding 模型 |
+| VectorStore | 向量存储 |
+| API Key | 调用各厂商的凭证 |
 
 ---
 
 ## ③ How - 思维 (怎么做)
 
+### 目标
+
+实现一个支持多供应商的 AI 模型接入框架，满足企业级灵活切换和扩展需求。
+
+### 范围
+
+```
+允许修改：
+- yudao-module-ai/                    (AI 模块)
+- yudao-framework/                    (框架层)
+
+禁止修改：
+- yudao-module-system/                (系统模块)
+- yudao-module-bpm/                   (流程模块)
+```
+
 ### 数据模型设计
 
+**AI 模型表 (ai_model)**：
 ```java
-// AI 平台枚举 - 支持 20+ 平台
+public class AiModelDO {
+    private Long id;              // 模型ID
+    private String name;          // 模型名称
+    private String platform;      // 平台标识 (如: TONG_YI, DEEP_SEEK)
+    private String model;         // 模型名 (如: qwen-turbo)
+    private Integer status;       // 状态 (0-停用, 1-启用)
+    private Integer sort;         // 排序
+    private Long creator;         // 创建者
+    private Long updater;         // 更新者
+    private Date createTime;      // 创建时间
+    private Date updateTime;      // 更新时间
+    private Boolean deleted;      // 是否删除
+}
+```
+
+**AI API Key 表 (ai_api_key)**：
+```java
+public class AiApiKeyDO {
+    private Long id;              // ID
+    private Long modelId;         // 模型ID
+    private String apiKey;        // API Key
+    private String secretKey;     // Secret Key (部分厂商需要)
+    private String url;           // 自定义 API 地址
+    private Integer status;       // 状态
+    private Date expireTime;      // 过期时间
+    private Long creator;         // 创建者
+    private Long updater;         // 更新者
+    private Date createTime;      // 创建时间
+    private Date updateTime;      // 更新时间
+}
+```
+
+### 关键流程设计
+
+```
+┌──────────────┐     ┌──────────────────┐     ┌────────────────┐
+│  业务调用     │ ──▶ │  AiModelFactory  │ ──▶ │  平台适配器    │
+│ (getChatModel)│     │     (工厂)       │     │ (Switch Case) │
+└──────────────┘     └──────────────────┘     └────────────────┘
+                                                         │
+                     ┌───────────────────────────────────┤
+                     │              │              │     │
+               ┌─────▼─────┐  ┌────▼────┐  ┌─────▼─────┐
+               │ 通义千问   │  │DeepSeek │  │ 智谱AI    │
+               │ DashScope │  │ SDK    │  │  SDK     │
+               └───────────┘  └─────────┘  └───────────┘
+```
+
+### 关键代码设计
+
+**工厂接口 (AiModelFactory.java)**：
+```java
+public interface AiModelFactory {
+    // 获取或创建对话模型
+    ChatModel getOrCreateChatModel(AiPlatformEnum platform, String apiKey, String url);
+    
+    // 获取默认配置的对话模型
+    ChatModel getDefaultChatModel(AiPlatformEnum platform);
+    
+    // 获取图像模型
+    ImageModel getDefaultImageModel(AiPlatformEnum platform);
+    
+    // 获取向量模型
+    EmbeddingModel getOrCreateEmbeddingModel(AiPlatformEnum platform, String apiKey, String url, String model);
+    
+    // 获取向量存储
+    VectorStore getOrCreateVectorStore(Class<? extends VectorStore> type, 
+                                       EmbeddingModel embeddingModel,
+                                       Map<String, Class<?>> metadataFields);
+}
+```
+
+**平台枚举 (AiPlatformEnum.java)**：
+```java
 public enum AiPlatformEnum {
     // 国内平台
     TONG_YI("TongYi", "通义千问"),      // 阿里
@@ -80,88 +183,46 @@ public enum AiPlatformEnum {
     ANTHROPIC("Anthropic", "Anthropic"),
     GEMINI("Gemini", "Gemini"),
     OLLAMA("Ollama", "Ollama"),
-    
-    // 图像/音乐
-    STABLE_DIFFUSION("StableDiffusion", "StableDiffusion"),
-    MIDJOURNEY("Midjourney", "Midjourney"),
-    SUNO("Suno", "Suno"),
     GROK("Grok", "Grok");
 }
-```
-
-### 关键流程设计
-
-```
-用户请求 → Controller → Service → AiModelFactory 
-                                    ↓
-                         根据平台类型创建对应 ChatModel
-                                    ↓
-                         调用底层 SDK（如 Spring AI）
-                                    ↓
-                         返回 AI 响应
-```
-
-### 目录结构
-
-```
-yudao-module-ai/
-├── yudao-module-ai-api/
-│   └── src/main/java/cn/iocoder/yudao/module/ai/
-│       └── enums/model/
-│           ├── AiPlatformEnum.java        # 平台枚举
-│           └── AiModelTypeEnum.java        # 模型类型
-│
-└── yudao-module-ai-server/
-    └── src/main/java/cn/iocoder/yudao/module/ai/
-        └── framework/ai/
-            ├── config/
-            │   ├── AiAutoConfiguration.java   # 自动配置
-            │   └── YudaoAiProperties.java     # 配置属性
-            └── core/model/
-                ├── AiModelFactory.java        # 工厂接口
-                ├── AiModelFactoryImpl.java    # 工厂实现（核心）
-                ├── baichuan/BaiChuanChatModel.java
-                ├── doubao/DouBaoChatModel.java
-                ├── deepseek/DeepSeekChatModel.java
-                ├── gemini/GeminiChatModel.java
-                ├── hunyuan/HunYuanChatModel.java
-                ├── xinghuo/XingHuoChatModel.java
-                ├── siliconflow/               # 硅基流动（集成多模型）
-                ├── midjourney/                # 图像生成
-                └── suno/                      # 音乐生成
 ```
 
 ---
 
 ## ④ Hard - 难点 (挑战)
 
-### 难点 1：多平台 API 差异
+### 难点 1：多厂商 SDK 差异统一
 
-每个平台的 API 请求/响应格式不同，需要针对性适配：
+**场景**：每个 AI 厂商的 SDK 使用方式不同，参数命名和调用方式各异。
 
-```java
-// 不同平台的请求参数差异
-// 通义千问：使用阿里云 DashScope SDK
-DashScopeChatModel.build(apiKey, options);
+**解决方案**：通过 Spring AI 的统一抽象层，将各厂商差异封装在适配器内部，对上层提供统一接口。
 
-// 百度：使用 QianFan SDK
-QianFanChatModel.build(apiKey, secretKey);
+### 难点 2：API Key 安全存储
 
-// DeepSeek：使用 Spring AI 原生支持
-DeepSeekChatModel.build(apiKey, options);
-```
+**场景**：API Key 明文存储存在泄露风险。
 
-### 难点 2：Token 计算方式不同
+**解决方案**：
+- 加密存储 API Key
+- 支持密钥管理服务（如阿里云 KMS）
+- 定期轮换机制
 
-各平台对 Token 的计算方式不同，可能导致计费差异。
+### 难点 3：供应商切换的兼容性
 
-### 难点 3：模型版本管理
+**场景**：不同模型的输出格式、能力边界不同，切换后可能导致业务异常。
 
-同一个平台有多个模型版本（如 GPT-4、GPT-4o、GPT-4o-mini），需要动态支持。
+**解决方案**：
+- 抽象统一响应格式
+- 关键业务做模型能力检测
+- 支持灰度切换和回滚
 
-### 难点 4：国产大模型兼容
+### 难点 4：Token 消耗统计与成本控制
 
-部分国产模型 SDK 不规范，需要额外适配。
+**场景**：多供应商情况下，难以统一管理和控制成本。
+
+**解决方案**：
+- 统一埋点统计 token 消耗
+- 设置成本预警阈值
+- 支持按供应商独立计费
 
 ---
 
@@ -169,65 +230,71 @@ DeepSeekChatModel.build(apiKey, options);
 
 | 指标 | 权重 | 说明 | 验证方法 |
 |------|------|------|----------|
-| 平台覆盖度 | 20% | 支持的主流平台数量 | 枚举类统计 |
-| 切换灵活性 | 20% | 切换平台是否需要改代码 | 单元测试 |
-| 可扩展性 | 15% | 新增平台的工作量 | 代码行数统计 |
-| API 兼容性 | 15% | 请求/响应格式一致性 | 接口测试 |
-| 文档完整性 | 10% | API 文档覆盖度 | 文档审查 |
-| 社区活跃度 | 10% | Spring AI 社区支持 | GitHub Stars |
-| 成本优化能力 | 10% | 是否支持成本监控 | 配置验证 |
+| 供应商支持数量 ≥ 15家 | 20% | 支持的主流 AI 供应商数量 | 代码统计 |
+| 接口调用成功率 ≥ 99.5% | 25% | 业务调用成功率 | 日志统计 |
+| 切换响应时间 < 500ms | 15% | 切换供应商的耗时 | 性能测试 |
+| API Key 安全性 | 20% | 敏感信息加密存储 | 安全审计 |
+| 模型兼容性 | 20% | 统一抽象层的完整性 | 单元测试 |
 
 ---
 
 ## ⑥ Select - 选型 (选哪个)
 
-### 候选方案
+### 候选方案对比
 
 | 方案 | 优点 | 缺点 | 适用场景 |
 |------|------|------|----------|
-| **Spring AI** | 统一抽象、社区活跃、多供应商支持 | 学习曲线 | 中大型项目 |
-| LangChain4j | Java 生态丰富 | 主要面向 Java 12+ | 需要复杂链式调用 |
-| 自研 adapter | 完全可控 | 工作量大、维护成本高 | 特殊业务需求 |
+| Spring AI | 统一抽象、社区活跃、厂商支持全面 | 学习曲线较陡 | 新项目首选 |
+| LangChain4j | Java 生态丰富、文档完善 | 厂商适配较少 | 需要复杂链式调用 |
+| 自研适配层 | 完全可控、定制灵活 | 工作量大、维护成本高 | 有特殊定制需求 |
 
 ### 选型理由
 
-选择 **Spring AI**，因为：
-
-1. ✅ **标准化接口**：提供统一的 ChatModel、EmbeddingModel 接口
-2. ✅ **多供应商支持**：内置 30+ 供应商支持
-3. ✅ **活跃社区**：Spring 官方维护，更新及时
-4. ✅ **与 yudao-cloud 技术栈一致**：项目本身基于 Spring Boot
+**选择 Spring AI**，因为：
+1. 官方已集成 30+ 主流 AI 供应商，开箱即用
+2. 统一 ChatModel/ImageModel/EmbeddingModel 接口
+3. 与 Spring Boot 无缝集成
+4. 社区活跃度高，持续更新
 
 ### 工具集
 
-- **代码分析**：IntelliJ IDEA
-- **API 测试**：Apifox、Postman
-- **官方文档**：https://docs.spring.io/spring-ai/reference/
+- **代码分析**：IntelliJ IDEA / VSCode
+- **API 测试**：Postman / Apifox
+- **文档**：
+  - Spring AI 官方文档：https://docs.spring.io/spring-ai/reference/
+  - yudao-cloud AI 模块：https://github.com/YunaiCloud/yudao-cloud
 
 ---
 
 ## ⑦ Impl - 实现 (细节)
 
-### 核心配置
+### 核心实体类
 
-```yaml
-# application.yaml
-ai:
-  platform: openai  # 当前使用的平台
-  models:
-    - platform: openai
-      api-key: ${OPENAI_API_KEY}
-      model: gpt-4o
-    - platform: tongyi
-      api-key: ${TONGYI_API_KEY}
-      model: qwen-turbo
-    - platform: deepseek
-      api-key: ${DEEPSEEK_API_KEY}
-      model: deepseek-chat
+```java
+// AI 模型
+public class AiModelDO {
+    private Long id;
+    private String name;
+    private String platform;
+    private String model;
+    private Integer status;
+    private Integer sort;
+}
+
+// AI API Key
+public class AiApiKeyDO {
+    private Long id;
+    private Long modelId;
+    private String apiKey;
+    private String secretKey;
+    private String url;
+    private Integer status;
+}
 ```
 
-### 核心代码 - AiModelFactoryImpl
+### 核心实现类
 
+**AiModelFactoryImpl 关键代码**：
 ```java
 @Override
 public ChatModel getOrCreateChatModel(AiPlatformEnum platform, String apiKey, String url) {
@@ -236,77 +303,40 @@ public ChatModel getOrCreateChatModel(AiPlatformEnum platform, String apiKey, St
         switch (platform) {
             case TONG_YI:
                 return buildTongYiChatModel(apiKey);
-            case OPENAI:
-                return buildOpenAIChatModel(apiKey);
             case DEEP_SEEK:
                 return buildDeepSeekChatModel(apiKey);
-            case ANTHROPIC:
-                return buildAnthropicChatModel(apiKey);
-            // ... 更多平台
+            case ZHI_PU:
+                return buildZhiPuChatModel(apiKey, url);
+            // ... 其他平台
             default:
-                throw new IllegalArgumentException("不支持的平台: " + platform);
+                throw new IllegalArgumentException("未知平台: " + platform);
         }
     });
 }
-
-private ChatModel buildOpenAIChatModel(String apiKey) {
-    OpenAiApi api = OpenAiApi.builder()
-            .apiKey(apiKey)
-            .build();
-    return OpenAiChatModel.builder()
-            .api(api)
-            .defaultOptions(OpenAiChatOptions.builder()
-                    .model("gpt-4o")
-                    .build())
-            .build();
-}
-
-private ChatModel buildTongYiChatModel(String apiKey) {
-    DashScopeApi api = DashScopeApi.builder()
-            .apiKey(apiKey)
-            .build();
-    return DashScopeChatModel.builder()
-            .api(api)
-            .build();
-}
 ```
 
-### 模型切换示例
+### 关键步骤校验
 
-```java
-@Service
-public class AiChatService {
-    
-    @Autowired
-    private AiModelFactory aiModelFactory;
-    
-    public String chat(String platform, String message) {
-        // 根据平台获取模型（自动缓存）
-        ChatModel chatModel = aiModelFactory.getOrCreateChatModel(
-            AiPlatformEnum.valueOf(platform),
-            getApiKey(platform),
-            null
-        );
-        
-        // 统一调用方式
-        ChatResponse response = chatModel.call(
-            new UserMessage(message)
-        );
-        
-        return response.getResult().getOutput().getText();
-    }
-}
-```
+| 步骤 | 校验点 | 验证方法 |
+|------|--------|----------|
+| 1. 配置 API Key | 配置文件正确加载 | 启动日志检查 |
+| 2. 创建 ChatModel | 模型实例非空 | 单元测试 |
+| 3. 调用模型 | 返回正常响应 | 集成测试 |
+| 4. 切换模型 | 响应正常 | 切换测试 |
 
-### 支持的功能
+### 失败恢复机制
 
-1. **聊天completion**
-2. **Function Calling（函数调用）**
-3. **Embedding（向量化）**
-4. **图像生成**（DALL-E、Midjourney、Stable Diffusion）
-5. **音乐生成**（Suno）
-6. **PPT 生成**（文心一言、讯飞）
-7. **RAG 向量存储**（Milvus、Qdrant、Redis）
+- **场景 1：API Key 无效**
+  - 触发：调用时返回 401
+  - 恢复：切换备用 API Key，记录告警
+
+- **场景 2：供应商服务不可用**
+  - 触发：网络超时或 5xx 错误
+  - 恢复：自动切换到备用供应商
+
+- **场景 3：响应格式异常**
+  - 触发：解析失败
+  - 恢复：记录异常日志，返回默认响应
 
 ---
 
@@ -314,89 +344,97 @@ public class AiChatService {
 
 ### 触发条件
 
-- 场景 1：需要接入多个 LLM 供应商
-- 场景 2：需要动态切换 LLM 平台
-- 场景 3：需要构建 RAG 应用
-- 场景 4：需要调用 AI 生成图像/音乐
+```
+场景1：需要接入新的 AI 供应商
+场景2：需要在多个 AI 模型间灵活切换
+场景3：需要统一管理 AI 供应商的 API Key
+场景4：需要基于 AI 能力构建应用
+```
 
 ### 执行流程
 
 ```
-Step 1: 引入依赖
-  - 在 pom.xml 添加 yudao-module-ai 依赖
-  - 添加具体平台的 SDK 依赖
+Step 1: 添加依赖
+  - 在 pom.xml 中添加对应厂商的 Spring AI Starter
+  - 示例：spring-ai-alibaba-starter
 
 Step 2: 配置 API Key
-  - 在 application.yaml 配置 ai.platform
-  - 配置各平台的 api-key
+  - 在 application.yaml 中配置
+  - spring.ai.tongyi.api-key=xxx
 
 Step 3: 注入使用
-  - 注入 AiModelFactory
-  - 调用 getOrCreateChatModel 获取模型实例
+  - @Autowired AiModelFactory
+  - ChatModel chatModel = factory.getOrCreateChatModel(platform, apiKey, url)
 
-Step 4: 调用 AI
-  - 使用统一的 ChatModel 接口调用
-  - 处理响应
+Step 4: 调用模型
+  - UserMessage userMessage = new UserMessage("你好");
+  - ChatResponse response = chatModel.call(userMessage);
 ```
 
 ### 配方/素材
 
 **技术栈**：Java 17+, Spring Boot 3.x, Spring AI
 
-**Maven 依赖**：
+**核心依赖**：
 ```xml
+<!-- Spring AI 基础 -->
+<dependency>
+    <groupId>org.springframework.ai</groupId>
+    <artifactId>spring-ai-core</artifactId>
+</dependency>
+
+<!-- 阿里云通义千问 -->
+<dependency>
+    <groupId>com.alibaba.cloud.ai</groupId>
+    <artifactId>spring-ai-alibaba-starter</artifactId>
+</dependency>
+
+<!-- OpenAI -->
 <dependency>
     <groupId>org.springframework.ai</groupId>
     <artifactId>spring-ai-openai-spring-boot-starter</artifactId>
 </dependency>
-<dependency>
-    <groupId>com.alibaba.cloud.ai</groupId>
-    <artifactId>spring-ai-dashscope-spring-boot-starter</artifactId>
-</dependency>
+```
+
+**配置文件**：
+```yaml
+spring:
+  ai:
+    tongyi:
+      api-key: ${TONGYI_API_KEY:}
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      base-url: https://api.openai.com
 ```
 
 ### 验收标准
 
-- [ ] 能够切换使用不同平台的 LLM
-- [ ] 能够正确处理各平台的 API 异常
-- [ ] 支持 Function Calling
-- [ ] 支持图像/音乐生成
-- [ ] 单元测试通过
+- [ ] 支持至少 15 家主流 AI 供应商
+- [ ] 可以通过 API 动态切换供应商
+- [ ] API Key 加密存储
+- [ ] 单元测试覆盖核心方法
+- [ ] 文档更新完毕
 
 ---
 
-## 附录：支持的平台汇总
+## 附录：支持的 AI 供应商列表
 
-### 国内平台
-
-| 平台 | 模型 | 说明 |
+| 平台 | 标识 | 备注 |
 |------|------|------|
-| 阿里云 | 通义千问 (TongYi) | qwen-turbo, qwen-plus, qwen-max |
-| 百度 | 文心一言 (YiYan) | ernie-bot-turbo, ernie-bot-4 |
-| 智谱 AI | 智谱 (ZhiPu) | glm-4, glm-4-flash |
-| 讯飞 | 星火 (XingHuo) | spark-v3.0, spark-v3.5 |
-| 字节 | 豆包 (DouBao) | doubao-pro-32k |
-| 腾讯 | 混元 (HunYuan) | hunyuan-pro |
-| MiniMax | MiniMax |abab6.5s-chat |
-| 月之暗面 | Moonshot | moonshot-v1-8k |
-| 百川智能 | BaiChuan | baichuan4 |
-| 硅基流动 | SiliconFlow | 集成多种模型 |
-
-### 国外平台
-
-| 平台 | 模型 | 说明 |
-|------|------|------|
-| OpenAI | GPT-4o, GPT-4o-mini | 官方 API |
-| Azure OpenAI | GPT-4 | 企业版 |
-| Anthropic | Claude 3.5 | Claude 系列 |
-| Google | Gemini | Gemini 系列 |
-| DeepSeek | DeepSeek-V3 | 开源大模型 |
-| Ollama | 本地模型 | 本地部署 |
-
-### 生成能力
-
-| 类型 | 平台 |
-|------|------|
-| 图像 | Midjourney, Stable Diffusion, DALL-E, 百度图片 |
-| 音乐 | Suno |
-| PPT | 文心一言、讯飞、文多多 |
+| 通义千问 | TONG_YI | 阿里云 |
+| 文心一言 | YI_YAN | 百度智能云 |
+| DeepSeek | DEEP_SEEK | DeepSeek |
+| 智谱 | ZHI_PU | 智谱 AI |
+| 星火 | XING_HUO | 讯飞 |
+| 豆包 | DOU_BAO | 字节 |
+| 混元 | HUN_YUAN | 腾讯云 |
+| 硅基流动 | SILICON_FLOW | 第三方 |
+| MiniMax | MINI_MAX | MiniMax |
+| 月之暗面 | MOONSHOT | KIMI |
+| 百川智能 | BAI_CHUAN | 百川 |
+| OpenAI | OPENAI | OpenAI |
+| Azure OpenAI | AZURE_OPENAI | 微软 |
+| Anthropic | ANTHROPIC | Claude |
+| Gemini | GEMINI | 谷歌 |
+| Ollama | OLLAMA | 本地部署 |
+| Grok | GROK | xAI |
